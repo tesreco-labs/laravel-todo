@@ -1,0 +1,96 @@
+pipeline {
+
+    agent any
+
+    parameters {
+
+        choice(
+            name: 'ENVIRONMENT',
+            choices: ['dev', 'qa', 'sandbox', 'prod'],
+            description: 'Deployment Environment'
+        )
+
+        string(
+            name: 'IMAGE_TAG',
+            description: 'Docker Image Tag'
+        )
+    }
+
+    environment {
+
+        IMAGE_NAME = "dockerhub-user/laravel-app"
+        DEPLOY_DIR = "/opt/laravel"
+    }
+
+    stages {
+
+        stage('Load Environment') {
+
+            steps {
+
+                script {
+
+                    env.ENV_FILE = "${DEPLOY_DIR}/.env.${params.ENVIRONMENT}"
+                }
+            }
+        }
+
+        stage('Deploy') {
+
+            steps {
+
+                sh """
+                    export IMAGE_NAME=${IMAGE_NAME}
+                    export IMAGE_TAG=${params.IMAGE_TAG}
+                    export ENV_FILE=${ENV_FILE}
+
+                    docker compose pull
+
+                    docker compose up -d
+                """
+            }
+        }
+
+        stage('Migration') {
+
+            steps {
+
+                sh """
+                    docker compose exec -T app \
+                    php artisan migrate --force
+                """
+            }
+        }
+
+        stage('Optimize') {
+
+            steps {
+
+                sh """
+                    docker compose exec -T app \
+                    php artisan optimize
+                """
+
+                sh """
+                    docker compose exec -T app \
+                    php artisan queue:restart
+                """
+
+                sh """
+                    docker compose exec -T horizon \
+                    php artisan horizon:terminate || true
+                """
+            }
+        }
+
+        stage('Health Check') {
+
+            steps {
+
+                sh """
+                    curl -f http://localhost/health
+                """
+            }
+        }
+    }
+}

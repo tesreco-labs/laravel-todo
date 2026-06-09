@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+    branches-ignore:
+      - main
+  pull_request:
+    branches:
+      - main
+
+env:
+  PHP_VERSION: "8.3"
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate Commit Messages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+
+          echo "Checking pushed commits..."
+          FAILED=0
+
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+
+            while IFS= read -r commit
+            do
+
+              if [ -n "$commit" ]; then
+
+                echo "-----------------------------------"
+                echo "Checking: $commit"
+              bash scripts/commit_checker.sh "$commit" || FAILED=1
+
+              fi
+
+            done < <(
+              echo '${{ toJson(github.event.commits.*.message) }}' | jq -r '.[]'
+            )
+
+          fi
+
+          if [ "$FAILED" -eq 1 ]; then
+            echo "❌ One or more commit messages are invalid."
+            exit 1
+          fi
+
+          echo "✅ All commit messages are valid."
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ env.PHP_VERSION }}
+
+      - name: Validate composer.json
+        run: composer validate --no-check-publish
+
+      - name: Check PHP Version Match
+        run: |
+          COMPOSER_PHP_VERSION=$(php -r "
+            \$composer = json_decode(file_get_contents('composer.json'), true);
+            echo preg_replace('/[^0-9.]/', '', \$composer['require']['php']);
+          ")
+
+          echo "Workflow PHP Version: $PHP_VERSION"
+          echo "Composer PHP Version: $COMPOSER_PHP_VERSION"
+
+          if [[ "$COMPOSER_PHP_VERSION" != "$PHP_VERSION" ]]; then
+            echo "❌ PHP version mismatch"
+            exit 1
+          fi
+
+          echo "✅ PHP versions match"
+
+      - name: Validate PHP Syntax
+        run: bash scripts/php_syntax_checker.sh
