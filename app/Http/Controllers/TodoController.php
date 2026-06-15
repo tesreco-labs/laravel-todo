@@ -29,10 +29,7 @@ class TodoController extends Controller
             $query->where('priority', $request->priority);
         }
 
-        $todos = $query
-            ->orderBy('id')
-            ->latest()
-            ->paginate(10);
+        $todos = $query->orderBy('id')->latest()->paginate(10);
 
         return view('index', compact('todos'));
     }
@@ -72,7 +69,6 @@ class TodoController extends Controller
         }
 
         Todo::create($validated);
-
         return redirect()
             ->route('todos.index')
             ->with('success', 'Todo created successfully.');
@@ -154,7 +150,6 @@ class TodoController extends Controller
     public function restore($id)
     {
         $todo = Todo::onlyTrashed()->findOrFail($id);
-
         $todo->restore();
 
         return redirect()
@@ -168,13 +163,11 @@ class TodoController extends Controller
     public function markCompleted($id)
     {
         $todo = Todo::findOrFail($id);
-
         $todo->update([
             'status'       => 'completed',
             'is_completed' => true,
             'completed_at' => now(),
         ]);
-
         return back()->with('success', 'Todo marked as completed.');
     }
 }

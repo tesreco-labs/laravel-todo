@@ -1,0 +1,197 @@
+pipeline {
+
+    agent any
+
+    environment {
+        DOCKER_USERNAME = "amar462"
+        DOCKER_CREDS    = "docker-devopps-id"
+    }
+
+    options {
+        timestamps()
+        disableConcurrentBuilds()
+
+        buildDiscarder(
+            logRotator(numToKeepStr: '20')
+        )
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Branch Info') {
+            steps {
+                echo "Branch : ${env.BRANCH_NAME}"
+            }
+        }
+
+        stage('Set Environment') {
+            steps {
+                script {
+
+                    // Git SHA
+                    env.GIT_SHA = sh(
+                        script: 'git rev-parse --short HEAD',
+                        returnStdout: true
+                    ).trim()
+
+                    // branch ke hisaab se image name aur dockerfile set karo
+                    if (env.BRANCH_NAME == 'master') {
+                        env.IMAGE_NAME   = "production"
+                        env.DOCKERFILE   = "docker/master/Dockerfile"
+                        env.DEPLOY       = "true"        // CD chalega
+
+                    } else if (env.BRANCH_NAME == 'release/dev') {
+                        env.IMAGE_NAME   = "staging"
+                        env.DOCKERFILE   = "docker/dev/Dockerfile"
+                        env.DEPLOY       = "false"       // CD nahi chalega
+
+                    } else if (env.BRANCH_NAME == 'release/qa') {
+                        env.IMAGE_NAME   = "qa"
+                        env.DOCKERFILE   = "docker/qa/Dockerfile"
+                        env.DEPLOY       = "false"       // CD nahi chalega
+
+                    } else {
+                        // koi aur branch — sirf info print karo
+                        env.IMAGE_NAME   = "unknown"
+                        env.DOCKERFILE   = "Dockerfile"
+                        env.DEPLOY       = "false"
+                    }
+
+                    echo "Git SHA    : ${env.GIT_SHA}"
+                    echo "Image Name : ${env.IMAGE_NAME}"
+                    echo "Dockerfile : ${env.DOCKERFILE}"
+                    echo "Deploy     : ${env.DEPLOY}"
+                }
+            }
+        }
+
+         // ── CI STAGES ──────────────────────────────────────────
+
+        stage('Build Docker Image') {
+            when {
+                anyOf {
+                    branch 'master'
+                    branch 'release/dev'
+                    branch 'release/qa'
+                }
+            }
+            steps {
+                sh """
+                    docker build \
+                        -f ${DOCKERFILE} \
+                        -t ${IMAGE_NAME}:${GIT_SHA} .
+                """
+            }
+        }
+
+        stage('Docker Login') {
+
+            when {
+                anyOf {
+                    branch 'release/dev'
+                    branch 'main'
+                }
+            }
+
+            steps {
+
+                withCredentials([
+                    usernamePassword(
+                        credentialsId: "${DOCKER_CREDS}",
+                        usernameVariable: 'DOCKER_USER',
+                        passwordVariable: 'DOCKER_PASS'
+                    )
+                ]) {
+
+                    sh '''
+                        echo "$DOCKER_PASS" | docker login \
+                        -u "$DOCKER_USER" \
+                        --password-stdin
+                    '''
+                }
+            }
+        }
+
+        stage('Tag Docker Image') {
+
+            when {
+                anyOf {
+                    branch 'release/dev'
+                    branch 'main'
+                }
+            }
+
+            steps {
+
+                sh """
+                    docker tag ${IMAGE_NAME}:${GIT_SHA} ${DOCKER_USERNAME}/${IMAGE_NAME}:${GIT_SHA}
+
+                    docker tag ${IMAGE_NAME}:${GIT_SHA} ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+                """
+
+            }
+        }
+
+        stage('Push Docker Image') {
+
+            when {
+                anyOf {
+                    branch 'release/dev'
+                    branch 'main'
+                }
+            }
+
+            steps {
+
+                sh """
+                    docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:${GIT_SHA}
+
+                    docker push ${DOCKER_USERNAME}/${IMAGE_NAME}:latest
+                """
+
+            }
+        }
+
+         // ── CD STAGE — SIRF MASTER PAR ─────────────────────────
+
+        stage('Deploy to Production') {
+             when {
+                anyOf {
+                    branch 'release/dev'
+                    branch 'main'
+                }
+            }
+            steps {
+                echo "deploy"
+            }
+        }
+    }
+
+    post {
+
+        success {
+            echo "✅ CI Pipeline Successful"
+        }
+
+        failure {
+            echo "❌ CI Pipeline Failed"
+        }
+
+        always {
+
+            sh '''
+                docker logout || true
+
+                docker image prune -f || true
+            '''
+
+            cleanWs()
+        }
+    }
+}
